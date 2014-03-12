@@ -28,7 +28,7 @@ int main(int argc, char **argv)
 
     /* precalculate all our logarithms */
     for (i = 0; i < 256; i++)
-        logs[i] = log(i);
+        logs[i] = log(i + 1);
 
     /* now calculate the difference frame by frame */
     while (!feof(rawFile) && !ferror(rawFile)) {
@@ -38,6 +38,7 @@ int main(int argc, char **argv)
             for (i = 0; i < frameSize; i++)
                 diff += fabs(logs[curFrame[i]] - logs[lastFrame[i]]);
             fwrite(&diff, sizeof(double), 1, stdout);
+            memcpy(lastFrame, curFrame, frameSize);
         }
     }
 

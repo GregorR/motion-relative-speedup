@@ -74,30 +74,40 @@ retry:
     goto retry;
 }
 
-/* find this frame with approximately this frame diff */
-
 int main(int argc, char **argv)
 {
     struct Buffer_double frameDiffs;
     char *frameSelections; /* 1 = skip */
     struct FrameDiff **frameDiffMap;
     struct FrameDiff *frameDiff;
-    int speedup, dropFrames, i, j;
+    int speedup, windowSize, dropFrames, i, j;
     int frameSize;
     FILE *inf, *outf;
     char *frame;
+    double divisor;
 
-    if (argc < 6) {
-        fprintf(stderr, "Use: selectframes <input file/fifo in YUV420p> <output file/fifo in YUV420p> <width> <height> <speedup> < <motion file>\n");
+    if (argc < 8) {
+        fprintf(stderr, "Use: selectframes <input file/fifo in YUV420p> <output file/fifo in YUV420p> <width> <height> <speedup> <window size> <clip-show divisor> < <motion file>\n");
         return 1;
     }
 
     frameSize = atoi(argv[3]) * atoi(argv[4]) * 6 / 4; /* YUV420p */
     speedup = atoi(argv[5]);
+    windowSize = atoi(argv[6]);
+    divisor = atof(argv[7]);
 
     /* first read in our motion data */
     INIT_BUFFER(frameDiffs);
     READ_FILE_BUFFER(frameDiffs, stdin);
+
+    /* calculate the window */
+    for (i = frameDiffs.bufused; i >= 0; i--) {
+        double val = 0;
+        int j;
+        for (j = i; j > i - windowSize && j >= 0; j--)
+            val += frameDiffs.buf[j];
+        frameDiffs.buf[i] = val;
+    }
 
     /* get it into the map */
     SF(frameDiffMap, malloc, NULL, (sizeof(struct FrameDiff *) * frameDiffs.bufused));
@@ -155,7 +165,8 @@ int main(int argc, char **argv)
                     (frameDiffs.bufused - nFramePos - 1) * sizeof(struct FrameDiff *));
 
             /* change it */
-            nFrame->frameDiff += frameDiff->frameDiff / 4;
+            if (divisor != 0)
+                nFrame->frameDiff += frameDiff->frameDiff / divisor;
 
             /* and readd it */
             nFramePos = frameDiffBSearch(nFrame, frameDiffMap + i, frameDiffs.bufused - i - 1) + i;
