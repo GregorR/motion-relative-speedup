@@ -195,7 +195,39 @@ int main(int argc, char **argv)
 
 void usage()
 {
-    fprintf(stderr, "USAGE STATEMENT HERE\n");
+    fprintf(stderr,
+        "Usage: mrspeedup -w <video width> -h <video height>\n"
+        "       {-s <speedup>|--drop-frames <#>|--keep-frames <#>} [options]\n"
+        "       <input video> <output video>\n"
+        "Flags:\n"
+        "\t-w|--width <video width>\n"
+        "\t\t(Required) Specify video width.\n"
+        "\t-h|--height <video height>\n"
+        "\t\t(Required) Specify video height.\n"
+        "\t-s|--speedup <speedup>\n"
+        "\t\tAverage speedup, used to calculate number of frames to drop.\n"
+        "\t--drop-frames <#>\n"
+        "\t\tAs an alternative to average speedup, precise number of frames to\n"
+        "\t\tdrop.\n"
+        "\t--keep-frames <#>\n"
+        "\t\tSimilar to --drop-frames, but number of frames to keep.\n"
+        "\t-m|--motion-data <file>\n"
+        "\t\tWrite/read motion data to/from the specified file.\n"
+        "\t-M|--motion-only\n"
+        "\t\tOnly calculate motion data, do not perform speedup. Motion data\n"
+        "\t\twill be written to the motion data file if specified, or the\n"
+        "\t\toutput file which would be used for the video otherwise.\n"
+        "\t--fps <#>\n"
+        "\t\tSpecify video FPS. Default 30.\n"
+        "\t--ffmpeg <cmd>\n"
+        "\t\tSpecify ffmpeg binary. Default \"ffmpeg\".\n"
+        "\t--clipshow-divisor <#>\n"
+        "\t\tSpecify the \"clipshow divisor\". Larger values put more emphasis\n"
+        "\t\ton keeping frames which are active in the original than on keeping\n"
+        "\t\tan equal amount of action per frame; i.e., it creates a sort of\n"
+        "\t\t\"clip show\". Values less than 1 are valid. 0 is interpreted as\n"
+        "\t\tinfinity, which will give priority ONLY to keeping active frames\n"
+        "\t\tin the original. Default 1.\n");
 }
 
 /* calculate the motion data for this input file */
@@ -494,6 +526,8 @@ void selectFrames(const char *outputFile, const char *inputFile,
             fwrite(frame, 1, frameSize, outf);
         }
     }
+    fclose(inf);
+    fclose(outf);
 
     waitpid(pidr, NULL, 0);
     waitpid(pidw, NULL, 0);
