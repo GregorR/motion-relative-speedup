@@ -80,19 +80,19 @@ int main(int argc, char **argv)
     char *frameSelections; /* 1 = skip */
     struct FrameDiff **frameDiffMap;
     struct FrameDiff *frameDiff;
-    int speedup, windowSize, dropFrames, i, j;
+    int windowSize, dropFrames, i, j;
     int frameSize;
     FILE *inf, *outf;
     char *frame;
     double divisor;
 
     if (argc < 8) {
-        fprintf(stderr, "Use: selectframes <input file/fifo in YUV420p> <output file/fifo in YUV420p> <width> <height> <speedup> <window size> <clip-show divisor> < <motion file>\n");
+        fprintf(stderr, "Use: selectframes <input file/fifo in YUV420p> <output file/fifo in YUV420p> <width> <height> <drop frames> <window size> <clip-show divisor> < <motion file>\n");
         return 1;
     }
 
     frameSize = atoi(argv[3]) * atoi(argv[4]) * 6 / 4; /* YUV420p */
-    speedup = atoi(argv[5]);
+    dropFrames = atoi(argv[5]);
     windowSize = atoi(argv[6]);
     divisor = atof(argv[7]);
 
@@ -132,7 +132,6 @@ int main(int argc, char **argv)
     SF(frameSelections, calloc, NULL, (frameDiffs.bufused, 1));
 
     /* now drop the appropriate number of frames */
-    dropFrames = frameDiffs.bufused * (speedup - 1) / speedup;
     for (i = 0; i < dropFrames; i++) {
         struct FrameDiff *nFrame;
         if (i % 100 == 0)
