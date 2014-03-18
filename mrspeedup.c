@@ -79,6 +79,9 @@ int main(int argc, char **argv)
             } else ARGLN(keep-frames) {
                 ARG_GET();
                 keepFrames = atoi(arg);
+            } else ARGLN(window) {
+                ARG_GET();
+                windowSize = atoi(arg);
             } else ARGLN(clipshow-divisor) {
                 ARG_GET();
                 clipshowDivisor = atof(arg);
@@ -221,6 +224,8 @@ void usage()
         "\t\tSpecify video FPS. Default 30.\n"
         "\t--ffmpeg <cmd>\n"
         "\t\tSpecify ffmpeg binary. Default \"ffmpeg\".\n"
+        "\t--window <#>\n"
+        "\t\tNumber of frames in the motion window. Default fps/3.\n"
         "\t--clipshow-divisor <#>\n"
         "\t\tSpecify the \"clipshow divisor\". Larger values put more emphasis\n"
         "\t\ton keeping frames which are active in the original than on keeping\n"
