@@ -1,4 +1,20 @@
-#define _XOPEN_SOURCE 700 /* for atoll and mkdtemp */
+/*
+ * Copyright (c) 2014 Gregor Richards
+ * 
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+ * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+ * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
+#define _XOPEN_SOURCE 700 /* for atoll, mkdtemp, snprintf */
 
 #include <fcntl.h>
 #include <math.h>
@@ -21,6 +37,7 @@ struct FrameDiff {
 };
 
 BUFFER(double, double);
+BUFFER(charp, char *);
 
 void usage();
 void calcMotionData(struct Buffer_double *frameDiffs, const char *inputFile,
@@ -41,6 +58,10 @@ void selectFrames(const char *outputFile, const char *inputFile,
                   unsigned long long frameCount,
                   int width, int height, int fps);
 
+void mkAudioFile(const char *audioFile, const char *inputFile,
+                 unsigned char *frameSelections, unsigned long long frameCount,
+                 int fps);
+
 char *ffmpegCommand = "ffmpeg";
 
 int main(int argc, char **argv)
@@ -52,12 +73,12 @@ int main(int argc, char **argv)
     struct FrameDiff **frameDiffMap;
     unsigned char *frameSelections;
 
-    char *inputFile = NULL, *outputFile = NULL;
+    char *inputFile = NULL, *outputFile = NULL, *audioFile = NULL;
     char *motionFile = NULL;
     int motionOnly = 0;
     int width = 0, height = 0;
     int fps = 30;
-    int windowSize = 0;
+    int windowSize = 1;
     double clipshowDivisor = 1;
     /* only one of these should be set */
     int speedup = 0;
@@ -70,6 +91,7 @@ int main(int argc, char **argv)
             ARGNV(m, motion-file, motionFile)
             ARGV(M, motion-only, motionOnly)
             ARGLNV(ffmpeg, ffmpegCommand)
+            ARGLNV(audio-file, audioFile)
             ARGN(s, speedup) {
                 ARG_GET();
                 speedup = atoi(arg);
@@ -192,8 +214,13 @@ int main(int argc, char **argv)
     /* now drop the appropriate number of frames */
     dropFramesf(frameSelections, frameCount, frameDiffMap, dropFrames, clipshowDivisor);
 
+    /* make the audio file */
+    if (audioFile) mkAudioFile(audioFile, inputFile, frameSelections, frameCount, fps);
+
     /* and write out the new video */
     selectFrames(outputFile, inputFile, frameSelections, frameCount, width, height, fps);
+
+    return 0;
 }
 
 void usage()
@@ -225,7 +252,8 @@ void usage()
         "\t--ffmpeg <cmd>\n"
         "\t\tSpecify ffmpeg binary. Default \"ffmpeg\".\n"
         "\t--window <#>\n"
-        "\t\tNumber of frames in the motion window. Default fps/3.\n"
+        "\t\tNumber of frames in the motion window. Default is 1 (i.e., no\n"
+        "\t\twindow). '0' will select 1/3rd of a second.\n"
         "\t--clipshow-divisor <#>\n"
         "\t\tSpecify the \"clipshow divisor\". Larger values put more emphasis\n"
         "\t\ton keeping frames which are active in the original than on keeping\n"
@@ -291,11 +319,11 @@ void calcMotionData(struct Buffer_double *frameDiffs, const char *inputFile,
     fclose(rawData);
     free(curFrame);
 
+    waitpid(pid, NULL, 0);
+
     unlink(fifo);
     fifo[fifoDirLen] = '\0';
     rmdir(fifo);
-
-    waitpid(pid, NULL, 0);
 }
 
 /* write the motion data out to a file */
@@ -389,7 +417,7 @@ void calcWindow(struct Buffer_double *frameDiffs, int windowSize)
 void mkFrameDiffMap(struct FrameDiff ***frameDiffMapPtr, struct Buffer_double *frameDiffs)
 {
     struct FrameDiff **frameDiffMap;
-    struct FrameDiff *frameDiff, *newFrameDiff;
+    struct FrameDiff *frameDiff;
     unsigned long long i;
 
     SF(frameDiffMap, malloc, NULL, (sizeof(struct FrameDiff *) * frameDiffs->bufused));
@@ -421,7 +449,7 @@ void dropFramesf(unsigned char *frameSelections, unsigned long long frameCount,
     for (i = 0; i < dropFrames; i++) {
         struct FrameDiff *nFrame;
         if (i % 100 == 0)
-            fprintf(stderr, "%d/%d\n", i, dropFrames);
+            fprintf(stderr, "Dropping frames: %d/%d\r", (int) i, (int) dropFrames);
 
         /* drop this frame */
         frameDiff = frameDiffMap[i];
@@ -461,6 +489,7 @@ void dropFramesf(unsigned char *frameSelections, unsigned long long frameCount,
             frameDiffMap[nFramePos] = nFrame;
         }
     }
+    fprintf(stderr, "\n");
 }
 
 /* make a video of the selected frames */
@@ -544,4 +573,132 @@ void selectFrames(const char *outputFile, const char *inputFile,
     fifow[fifoDirLen] = '\0';
     rmdir(fifor);
     rmdir(fifow);
+}
+
+/* make the audio file */
+void mkAudioFile(const char *audioFile, const char *inputFile,
+                 unsigned char *frameSelections, unsigned long long frameCount,
+                 int fps)
+{
+    char flacf[] = "/tmp/mrspeedup.XXXXXX\0a.flac";
+    int flacfLen = strlen(flacf);
+
+    char *tmps;
+    int i, tmpi;
+    unsigned long long frame;
+    pid_t pid;
+    struct Buffer_charp args, allocatedArgs;
+    double inlen, outlen, framelen;
+
+    SF(tmps, mkdtemp, NULL, (flacf));
+    flacf[flacfLen] = '/';
+
+    /* get out the audio data */
+    SF(pid, fork, -1, ());
+    if (pid == 0) {
+        SF(tmpi, execlp, -1, (ffmpegCommand, ffmpegCommand,
+            "-i", inputFile,
+            flacf, NULL));
+    }
+    waitpid(pid, NULL, 0);
+
+    /* make the sox command */
+    INIT_BUFFER(args);
+    INIT_BUFFER(allocatedArgs);
+
+    WRITE_ONE_BUFFER(args, "sox");
+    WRITE_ONE_BUFFER(args, (char *) flacf);
+    WRITE_ONE_BUFFER(args, (char *) audioFile);
+
+    framelen = 1.0 / fps;
+    inlen = outlen = 0;
+    for (frame = 0; frame < frameCount; frame++) {
+        inlen += framelen;
+        if (!frameSelections[frame]) outlen += framelen;
+
+        /* output it if applicable */
+        if (outlen >= 0.1 || frame == frameCount - 1) {
+            double speedup, tempoup;
+            char *trimBuf, *speedBuf, *tempoBuf;
+
+            if (inlen == 0 || outlen == 0) inlen = outlen = 0.1;
+            speedup = 1;
+            tempoup = inlen / outlen;
+
+            /* divide the speedup into speed and tempo */
+            if (tempoup >= 10) {
+                if (tempoup >= 40) {
+                    speedup = 4;
+                    tempoup /= 4;
+                } else {
+                    speedup = tempoup / 10;
+                    tempoup /= speedup;
+                }
+            }
+
+            /* first trim */
+            WRITE_ONE_BUFFER(args, "trim");
+            WRITE_ONE_BUFFER(args, "0");
+            SF(trimBuf, malloc, NULL, (32));
+            snprintf(trimBuf, 32, "%.32f", inlen);
+            WRITE_ONE_BUFFER(args, trimBuf);
+            WRITE_ONE_BUFFER(allocatedArgs, trimBuf);
+
+            /* then speedup */
+            if (speedup != 1) {
+                WRITE_ONE_BUFFER(args, "speed");
+                SF(speedBuf, malloc, NULL, (32));
+                snprintf(speedBuf, 32, "%.32f", speedup);
+                WRITE_ONE_BUFFER(args, speedBuf);
+                WRITE_ONE_BUFFER(allocatedArgs, speedBuf);
+
+                WRITE_ONE_BUFFER(args, "rate");
+                WRITE_ONE_BUFFER(args, "48k");
+            }
+
+            if (tempoup != 1) {
+                WRITE_ONE_BUFFER(args, "tempo");
+                SF(tempoBuf, malloc, NULL, (32));
+                snprintf(tempoBuf, 32, "%.32f", tempoup);
+                WRITE_ONE_BUFFER(args, tempoBuf);
+                WRITE_ONE_BUFFER(allocatedArgs, tempoBuf);
+            }
+
+            WRITE_ONE_BUFFER(args, "trim");
+            WRITE_ONE_BUFFER(args, "0");
+            SF(trimBuf, malloc, NULL, (32));
+            snprintf(trimBuf, 32, "%.32f", outlen);
+            WRITE_ONE_BUFFER(args, trimBuf);
+            WRITE_ONE_BUFFER(allocatedArgs, trimBuf);
+
+            WRITE_ONE_BUFFER(args, ":");
+            inlen = outlen = 0;
+        }
+    }
+
+    for (i = 0; i < args.bufused; i++)
+        fprintf(stderr, "%s ", args.buf[i]);
+    fprintf(stderr, "\n");
+
+    WRITE_ONE_BUFFER(args, "trim");
+    WRITE_ONE_BUFFER(args, "0");
+    WRITE_ONE_BUFFER(args, "0");
+    WRITE_ONE_BUFFER(args, NULL);
+
+    SF(pid, fork, -1, ());
+    if (pid == 0) {
+        /* run sox */
+        SF(tmpi, execvp, -1, (args.buf[0], args.buf));
+    }
+    waitpid(pid, NULL, 0);
+
+    for (i = 0; i < allocatedArgs.bufused; i++)
+        free(allocatedArgs.buf[i]);
+
+    FREE_BUFFER(allocatedArgs);
+    FREE_BUFFER(args);
+
+    unlink(flacf);
+    flacf[flacfLen] = '\0';
+    rmdir(flacf);
 }
